@@ -1,0 +1,56 @@
+# ── API Keys ──────────────────────────────────────────────────────────────────
+api:
+  anthropic_api_key: "YOUR_ANTHROPIC_API_KEY"   # 或设置环境变量 ANTHROPIC_API_KEY
+  openai_api_key:    "YOUR_OPENAI_API_KEY"       # 可选，用于 GPT-4o 标注
+
+# ── 模型选择 ───────────────────────────────────────────────────────────────────
+models:
+  primary: "claude-opus-4-6"
+  secondary: "claude-sonnet-4-6"
+  local: null  # e.g. "http://localhost:8000/v1"
+
+# ── 数据目录 ───────────────────────────────────────────────────────────────────
+data:
+  image_dir:  "data/raw/images"
+  video_dir:  "data/raw/videos"
+  audio_dir:  "data/raw/audios"
+  output_dir: "data/sft"
+  frames_dir: "data/raw/video_frames"
+
+# ── 生产目标（每类样本数上限） ──────────────────────────────────────────────────
+targets:
+  image_single: 5000   # 单图单轮
+  image_multi:  3000   # 单图多轮
+  multi_image:  2000   # 多图对比
+  video:        1000   # 视频对话
+  audio:        1000   # 音频对话
+
+# ── 视频帧提取 ─────────────────────────────────────────────────────────────────
+video:
+  frames_per_video: 8   # 均匀采样帧数
+  jpeg_quality: 90
+
+# ── 音频 TTS ──────────────────────────────────────────────────────────────────
+audio:
+  voices_per_sample: 2  # 每条文本用几个音色合成
+  max_tts_text_len: 100 # 超过此长度不做 TTS
+
+# ── 质量过滤 ───────────────────────────────────────────────────────────────────
+filter:
+  min_answer_len: 8
+  # 触发过滤的拒答模式
+  bad_patterns:
+    - "无法查看"
+    - "无法分析这张"
+    - "作为AI我无法"
+    - "图片似乎没有"
+
+# ── 多轮对话风格 ───────────────────────────────────────────────────────────────
+multiturn:
+  n_styles: 2  # 每张图生成几种风格的多轮对话（最多3种）
+
+# ── LlamaFactory 集成 ─────────────────────────────────────────────────────────
+llamafactory:
+  enabled: false
+  dataset_info_path: "LLaMA-Factory/data/dataset_info.json"
+  dataset_name: "my_multimodal_sft"
