@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+import traceback
 
 # 确保可以从项目根目录导入
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -34,6 +35,7 @@ from src.annotators import (
 )
 from src.filters.quality import filter_dataset
 from src.converters.to_llamafactory import register_to_llamafactory
+from src.utils.utils import save_final_json, save_jsonl_online
 
 
 # ── 配置加载 ───────────────────────────────────────────────────────────────────
@@ -68,9 +70,9 @@ def run_image_single(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
         print(f"  [{i+1}/{len(images)}] {Path(path).name}", end=" ... ")
         samples = annotator.annotate_and_convert(path)
         dataset.extend(samples)
-        print(f"✓ {len(samples)} 条" if samples else "✗ 跳过")
+        print(f" {len(samples)} 条" if samples else " 跳过")
 
-    print(f"  → 共 {len(dataset)} 条")
+    print(f"  共 {len(dataset)} 条")
     return dataset
 
 
@@ -92,9 +94,9 @@ def run_image_multi(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
         print(f"  [{i+1}/{len(images)}] {Path(path).name}", end=" ... ")
         samples = annotator.annotate_and_convert(path)
         dataset.extend(samples)
-        print(f"✓ {len(samples)} 条" if samples else "✗ 跳过")
+        print(f" {len(samples)} 条" if samples else " 跳过")
 
-    print(f"  → 共 {len(dataset)} 条")
+    print(f"  共 {len(dataset)} 条")
     return dataset
 
 
@@ -115,9 +117,9 @@ def run_multi_image(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
         print(f"  [{i+1}/{len(pairs)}] {Path(path_a).name} + {Path(path_b).name}", end=" ... ")
         samples = annotator.annotate_and_convert(path_a, path_b)
         dataset.extend(samples)
-        print(f"✓ {len(samples)} 条" if samples else "✗ 跳过")
+        print(f" {len(samples)} 条" if samples else " 跳过")
 
-    print(f"  → 共 {len(dataset)} 条")
+    print(f"  共 {len(dataset)} 条")
     return dataset
 
 
@@ -145,9 +147,9 @@ def run_video(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
         print(f"  [{i+1}/{len(videos)}] {Path(path).name}", end=" ... ")
         samples = annotator.annotate_and_convert(path)
         dataset.extend(samples)
-        print(f"✓ {len(samples)} 条" if samples else "✗ 跳过")
+        print(f" {len(samples)} 条" if samples else " 跳过")
 
-    print(f"  → 共 {len(dataset)} 条")
+    print(f"  共 {len(dataset)} 条")
     return dataset
 
 
@@ -167,7 +169,7 @@ def run_audio(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
     target = cfg["targets"]["audio"]
     dataset = dataset[:target]
 
-    print(f"  → 共 {len(dataset)} 条")
+    print(f"  共 {len(dataset)} 条")
     return dataset
 
 
@@ -210,18 +212,20 @@ def run_pipeline(config_path: str = "configs/config.yaml",
 
     for runner in runners:
         try:
-            all_data.extend(runner(cfg, prompts, client))
+            results = runner(cfg, prompts, client)
+            save_jsonl_online(results, f"{cfg['data']['output_dir']}/{runner.__name__}_online.jsonl")
+            all_data.extend(results)
         except Exception as e:
             print(f"[ERROR] {runner.__name__} 失败: {e}")
-
+            traceback.print_exc()
+            
     # 4. 保存原始结果
     output_dir = cfg["data"]["output_dir"]
     Path(output_dir).mkdir(parents=True, exist_ok=True)
-    raw_output = f"{output_dir}/multimodal_sft_raw.json"
+    raw_output = f"{output_dir}/multimodal_sft_{mode}_raw.json"
 
-    with open(raw_output, "w", encoding="utf-8") as f:
-        json.dump(all_data, f, ensure_ascii=False, indent=2)
-    print(f"\n原始数据: {len(all_data)} 条 → {raw_output}")
+    save_final_json(all_data, raw_output)
+    print(f"\n原始数据: {len(all_data)} 条 {raw_output}")
 
     # 5. 质量过滤
     filtered_output = f"{output_dir}/multimodal_sft.json"
@@ -240,7 +244,7 @@ def run_pipeline(config_path: str = "configs/config.yaml",
             lf_cfg.get("dataset_info_path", "LLaMA-Factory/data/dataset_info.json"),
         )
 
-    print(f"\n全部完成，最终数据 → {filtered_output}")
+    print(f"\n全部完成，最终数据 {filtered_output}")
 
 
 
