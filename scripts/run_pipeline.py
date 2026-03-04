@@ -191,7 +191,7 @@ def run_pipeline(config_path: str = "configs/config.yaml",
     # 2. 初始化 LLM 客户端
     client = LLMClient(
             provider="qwen_local",
-            model="ckpt/qwenvl"
+            model="ckpt/qwen_vl"
         )
 
     print(f"模型: qwen vl")
