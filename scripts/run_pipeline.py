@@ -69,6 +69,7 @@ def run_image_single(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
     for i, path in enumerate(images):
         print(f"  [{i+1}/{len(images)}] {Path(path).name}", end=" ... ")
         samples = annotator.annotate_and_convert(path)
+        save_jsonl_online(samples, f"{cfg['data']['output_dir']}/image_single_{Path(path).stem}.jsonl")
         dataset.extend(samples)
         print(f" {len(samples)} 条" if samples else " 跳过")
 
@@ -93,6 +94,7 @@ def run_image_multi(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
     for i, path in enumerate(images):
         print(f"  [{i+1}/{len(images)}] {Path(path).name}", end=" ... ")
         samples = annotator.annotate_and_convert(path)
+        save_jsonl_online(samples, f"{cfg['data']['output_dir']}/image_multi_{Path(path).stem}.jsonl")
         dataset.extend(samples)
         print(f" {len(samples)} 条" if samples else " 跳过")
 
@@ -116,6 +118,7 @@ def run_multi_image(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
     for i, (path_a, path_b) in enumerate(pairs):
         print(f"  [{i+1}/{len(pairs)}] {Path(path_a).name} + {Path(path_b).name}", end=" ... ")
         samples = annotator.annotate_and_convert(path_a, path_b)
+        save_jsonl_online(samples, f"{cfg['data']['output_dir']}/multi_image_{Path(path_a).stem}_{Path(path_b).stem}.jsonl")
         dataset.extend(samples)
         print(f" {len(samples)} 条" if samples else " 跳过")
 
@@ -146,6 +149,7 @@ def run_video(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
     for i, path in enumerate(videos):
         print(f"  [{i+1}/{len(videos)}] {Path(path).name}", end=" ... ")
         samples = annotator.annotate_and_convert(path)
+        save_jsonl_online(samples, f"{cfg['data']['output_dir']}/video_{Path(path).stem}.jsonl")
         dataset.extend(samples)
         print(f" {len(samples)} 条" if samples else " 跳过")
 
@@ -169,6 +173,7 @@ def run_audio(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
     target = cfg["targets"]["audio"]
     dataset = dataset[:target]
 
+    save_final_json(dataset, f"{cfg['data']['output_dir']}/audio_asr_raw.json")
     print(f"  共 {len(dataset)} 条")
     return dataset
 
@@ -213,7 +218,6 @@ def run_pipeline(config_path: str = "configs/config.yaml",
     for runner in runners:
         try:
             results = runner(cfg, prompts, client)
-            save_jsonl_online(results, f"{cfg['data']['output_dir']}/{runner.__name__}_online.jsonl")
             all_data.extend(results)
         except Exception as e:
             print(f"[ERROR] {runner.__name__} 失败: {e}")
