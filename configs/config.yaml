@@ -3,12 +3,9 @@ api:
   anthropic_api_key: "YOUR_ANTHROPIC_API_KEY"   # 或设置环境变量 ANTHROPIC_API_KEY
   openai_api_key:    "YOUR_OPENAI_API_KEY"       # 可选，用于 GPT-4o 标注
 
-# ── 模型选择 ───────────────────────────────────────────────────────────────────
 models:
-  primary: "claude-opus-4-6"
-  secondary: "claude-sonnet-4-6"
-  local: null  # e.g. "http://localhost:8000/v1"
-
+  vision_model_path: ckpt/qwen_vl      # Qwen3-VL，处理图像 / 视频
+  audio_model_path:  ckpt/qwen_omni 
 # ── 数据目录 ───────────────────────────────────────────────────────────────────
 data:
   image_dir:  "data/raw/images"

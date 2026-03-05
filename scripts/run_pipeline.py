@@ -9,18 +9,19 @@
     python scripts/run_pipeline.py --mode video
     python scripts/run_pipeline.py --mode audio
     python scripts/run_pipeline.py --config configs/my.yaml # 指定配置文件
+
+模型分配说明：
+    图像 / 视频  → Qwen3-VL      (ckpt/qwen_vl)
+    音频         → Qwen3-Omni    (ckpt/qwen_omni)   ← 必须用全模态模型
 """
 import argparse
 import json
-import os
 import sys
-from dataclasses import dataclass, field
+import traceback
 from pathlib import Path
 
 import yaml
-import traceback
 
-# 确保可以从项目根目录导入
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.utils.llm_client import LLMClient
@@ -61,7 +62,6 @@ def run_image_single(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
     annotator = ImageSingleAnnotator(client, prompts)
     images = get_image_files(cfg["data"]["image_dir"])
     target = cfg["targets"]["image_single"]
-    # 每张图约产出 7 条，估算需要的图片数
     needed = target // 7 + 1
     images = images[:needed]
 
@@ -141,7 +141,6 @@ def run_video(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
     )
     videos = get_video_files(cfg["data"]["video_dir"])
     target = cfg["targets"]["video"]
-    # 每个视频约产出 7 条
     needed = target // 7 + 1
     videos = videos[:needed]
 
@@ -158,10 +157,19 @@ def run_video(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
 
 
 def run_audio(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
-    """音频对话标注（ASR 模式）。"""
+    """
+    音频对话标注（ASR 模式）。
+    必须传入 Qwen3-Omni 客户端，Qwen3-VL 不支持音频输入。
+    """
     print("\n" + "="*50)
     print("[5/5] 音频对话（ASR）")
     print("="*50)
+
+    # 安全检查：防止误用 VL 模型跑音频
+    if client.provider == "qwen_local":
+        print("[WARNING] 音频模块需要 Qwen3-Omni，当前传入的是 Qwen3-VL，跳过音频标注。")
+        print("          请在 configs/config.yaml 中配置 audio.model_path，或设置 audio.skip=true")
+        return []
 
     audio_cfg = cfg.get("audio", {})
     annotator = AudioAnnotator(
@@ -180,6 +188,15 @@ def run_audio(cfg: dict, prompts: dict, client: LLMClient) -> list[dict]:
 
 # ── 主流水线 ───────────────────────────────────────────────────────────────────
 
+# 各模块使用的模型类型：vision 用 Qwen3-VL，audio 用 Qwen3-Omni
+MODALITY_MAP = {
+    "image_single": "vision",
+    "image_multi":  "vision",
+    "multi_image":  "vision",
+    "video":        "vision",
+    "audio":        "audio",   # ← 必须走独立的全模态模型
+}
+
 MODE_RUNNERS = {
     "image_single": run_image_single,
     "image_multi":  run_image_multi,
@@ -189,49 +206,94 @@ MODE_RUNNERS = {
 }
 
 
-def run_pipeline(config_path: str = "configs/config.yaml",
-                 mode: str = "all"):
+def _build_clients(cfg: dict) -> dict[str, LLMClient]:
+    """
+    按需加载模型，避免不必要的显存占用。
+    返回 {"vision": LLMClient, "audio": LLMClient | None}
+    """
+    model_cfg = cfg.get("models", {})
+
+    vision_path = model_cfg.get("vision_model_path", "ckpt/qwen_vl")
+    print(f"\n[模型] 视觉模型: {vision_path}")
+    vision_client = LLMClient(provider="qwen_local", model=vision_path)
+
+    # 音频模型按需加载
+    audio_path = model_cfg.get("audio_model_path", "")
+    audio_client = None
+    if audio_path:
+        print(f"[模型] 音频模型: {audio_path}")
+        audio_client = LLMClient(provider="qwen_omni_local", model=audio_path)
+    else:
+        print("[模型] 未配置 audio_model_path，音频模块将被跳过")
+        print("       在 configs/config.yaml 中添加 models.audio_model_path: ckpt/qwen_omni 以启用")
+
+    return {"vision": vision_client, "audio": audio_client}
+
+
+def run_pipeline(config_path: str = "configs/config.yaml", mode: str = "all"):
     # 1. 加载配置
     cfg = load_config(config_path)
     prompts = load_prompts("configs/prompts.yaml")
+    output_dir = cfg["data"]["output_dir"]
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    # 2. 初始化 LLM 客户端
-    client = LLMClient(
-            provider="qwen_local",
-            model="ckpt/qwen_vl"
-        )
-
-    print(f"模型: qwen vl")
-    print(f"输出目录: {cfg['data']['output_dir']}")
-
-    # 3. 运行各模块
-    all_data: list[dict] = []
-
+    # 2. 确定需要运行的模块
     if mode == "all":
-        runners = list(MODE_RUNNERS.values())
+        runners = list(MODE_RUNNERS.items())
     else:
         if mode not in MODE_RUNNERS:
             print(f"[ERROR] 未知 mode: {mode}，可选: {list(MODE_RUNNERS.keys())}")
             sys.exit(1)
-        runners = [MODE_RUNNERS[mode]]
+        runners = [(mode, MODE_RUNNERS[mode])]
 
-    for runner in runners:
+    # 3. 按需加载模型（只在需要时加载音频模型）
+    needs_audio = any(MODALITY_MAP[m] == "audio" for m, _ in runners)
+    needs_vision = any(MODALITY_MAP[m] == "vision" for m, _ in runners)
+
+    model_cfg = cfg.get("models", {})
+    vision_client = None
+    audio_client = None
+
+    if needs_vision:
+        vision_path = model_cfg.get("vision_model_path", "ckpt/qwen_vl")
+        print(f"\n[模型] 视觉模型加载: {vision_path}")
+        vision_client = LLMClient(provider="qwen_local", model=vision_path)
+
+    if needs_audio:
+        audio_path = model_cfg.get("audio_model_path", "")
+        if audio_path:
+            print(f"[模型] 音频模型加载: {audio_path}")
+            audio_client = LLMClient(provider="qwen_omni_local", model=audio_path)
+        else:
+            print("[模型] ⚠️  需要运行音频模块，但 models.audio_model_path 未配置，音频将被跳过")
+
+    print(f"[输出] {output_dir}\n")
+
+    # 4. 运行各模块，按模态选择对应客户端
+    all_data: list[dict] = []
+
+    for module_name, runner in runners:
+        modality = MODALITY_MAP[module_name]
+        client = audio_client if modality == "audio" else vision_client
+
+        # 音频模型未配置时安全跳过
+        if client is None:
+            print(f"\n[SKIP] {module_name} 跳过（模型未加载）")
+            continue
+
         try:
             results = runner(cfg, prompts, client)
             all_data.extend(results)
         except Exception as e:
             print(f"[ERROR] {runner.__name__} 失败: {e}")
             traceback.print_exc()
-            
-    # 4. 保存原始结果
-    output_dir = cfg["data"]["output_dir"]
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    # 5. 保存汇总结果
     raw_output = f"{output_dir}/multimodal_sft_{mode}_raw.json"
-
     save_final_json(all_data, raw_output)
-    print(f"\n原始数据: {len(all_data)} 条 {raw_output}")
+    print(f"\n原始数据: {len(all_data)} 条 → {raw_output}")
 
-    # 5. 质量过滤
+    # 6. 质量过滤
     filtered_output = f"{output_dir}/multimodal_sft.json"
     filter_cfg = cfg.get("filter", {})
     filter_dataset(
@@ -239,7 +301,7 @@ def run_pipeline(config_path: str = "configs/config.yaml",
         bad_patterns=filter_cfg.get("bad_patterns"),
     )
 
-    # 6. 注册到 LlamaFactory（可选）
+    # 7. 注册到 LlamaFactory（可选）
     lf_cfg = cfg.get("llamafactory", {})
     if lf_cfg.get("enabled"):
         register_to_llamafactory(
@@ -248,8 +310,7 @@ def run_pipeline(config_path: str = "configs/config.yaml",
             lf_cfg.get("dataset_info_path", "LLaMA-Factory/data/dataset_info.json"),
         )
 
-    print(f"\n全部完成，最终数据 {filtered_output}")
-
+    print(f"\n全部完成，最终数据 → {filtered_output}")
 
 
 if __name__ == "__main__":
@@ -262,5 +323,4 @@ if __name__ == "__main__":
         help="运行模式：all 运行全部，或指定单个模块"
     )
     args = parser.parse_args()
-
     run_pipeline(config_path=args.config, mode=args.mode)
